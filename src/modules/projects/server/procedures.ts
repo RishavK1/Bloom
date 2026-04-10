@@ -1,18 +1,63 @@
 import { inngest } from "@/inngest/client";
-import {generateSlug} from "random-word-slugs";
+import { GEMINI_FAST_MODELS } from "@/lib/ai-models";
 import { prisma } from "@/lib/db";
+import { runAgentWithGeminiFallback } from "@/lib/gemini";
 import {  createTRPCRouter, protectedProcedure } from "@/trpc/init";
 import z from "zod";
 import { TRPCError } from "@trpc/server";
 import { consumeCredits } from "@/lib/usage";
-import { gemini, createAgent } from "@inngest/agent-kit";
+import { createAgent } from "@inngest/agent-kit";
+
+const PROJECT_NAME_STOP_WORDS = new Set([
+    "a",
+    "an",
+    "app",
+    "application",
+    "build",
+    "create",
+    "for",
+    "make",
+    "simple",
+    "site",
+    "the",
+    "using",
+    "web",
+    "website",
+    "with",
+]);
+
+function deriveProjectNameFromPrompt(userPrompt: string) {
+    const tokens = userPrompt
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, " ")
+        .split(/[\s-]+/)
+        .filter(Boolean)
+        .filter((token) => !PROJECT_NAME_STOP_WORDS.has(token))
+        .slice(0, 3);
+
+    if (tokens.length === 0) {
+        return "untitled-app";
+    }
+
+    const slug = tokens.join("-");
+    if (tokens.length === 1 && !/(app|blog|dashboard|manager|platform|portfolio|site|store|tool|tracker|website)$/.test(slug)) {
+        return `${slug}-app`;
+    }
+
+    return slug;
+}
 
 async function generateProjectName(userPrompt: string): Promise<string> {
+    const promptBasedName = deriveProjectNameFromPrompt(userPrompt);
+
     try {
-        const nameGenerator = createAgent({
-            name: "project-name-generator",
-            description: "Generates smart project names based on user prompts",
-            system: `You are a project name generator. Generate a short, descriptive project name based on what the user wants to build.
+        const result = await runAgentWithGeminiFallback({
+            input: userPrompt,
+            models: GEMINI_FAST_MODELS,
+            buildAgent: (model) => createAgent({
+                name: "project-name-generator",
+                description: "Generates smart project names based on user prompts",
+                system: `You are a project name generator. Generate a short, descriptive project name based on what the user wants to build.
 
 Rules:
 - Max 3 words, preferably 2
@@ -27,13 +72,12 @@ User: "build a calculator" → "calculator-app"
 User: "create a todo list with categories" → "todo-manager"
 User: "weather app that shows forecast" → "weather-dashboard"
 User: "Netflix clone" → "netflix-clone"`,
-            model: gemini({ model: "gemini-2.0-flash-exp" }),
+                model,
+            }),
         });
-
-        const result = await nameGenerator.run(userPrompt);
         
         // Extract text from the output
-        let projectName = generateSlug(2, { format: "kebab" }); // Fallback
+        let projectName = promptBasedName;
         if (result.output && result.output.length > 0) {
             const firstOutput = result.output[0];
             if (firstOutput.type === "text") {
@@ -45,12 +89,15 @@ User: "Netflix clone" → "netflix-clone"`,
                 }
             }
         }
-        
-        return projectName;
+
+        if (!projectName || projectName.replace(/-/g, "").length < 3) {
+            return promptBasedName;
+        }
+
+        return projectName.replace(/-+/g, "-").replace(/^-|-$/g, "");
     } catch (error) {
         console.error("Project name generation error:", error);
-        // Fallback to random slug
-        return generateSlug(2, { format: "kebab" });
+        return promptBasedName;
     }
 }
 

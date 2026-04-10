@@ -477,7 +477,7 @@ Update models in `src/inngest/functions.ts`:
 model: gemini({ model: "gemini-2.5-flash" })
 
 // Quick tasks (naming, titles, enhancement)
-model: gemini({ model: "gemini-2.0-flash-exp" })
+model: gemini({ model: "gemini-2.5-flash" })
 ```
 
 To switch to Claude (Anthropic):

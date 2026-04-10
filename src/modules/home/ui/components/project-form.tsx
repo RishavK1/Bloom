@@ -69,8 +69,13 @@ export const ProjectForm = () => {
 
     const enhancePrompt = useMutation(trpc.promptEnhancer.enhance.mutationOptions({
         onSuccess: (data) => {
-            form.setValue("value", data.enhanced);
-            toast.success("Prompt enhanced!");
+            const enhancedPrompt = data.enhanced.trim();
+            form.setValue("value", enhancedPrompt, {
+                shouldDirty: true,
+                shouldTouch: true,
+                shouldValidate: true,
+            });
+            toast.success("Prompt updated in input");
             setIsEnhancing(false);
         },
         onError: () => {
