@@ -34,6 +34,8 @@ export interface RunCodeAgentResult {
   title: string;
 }
 
+const SHOULD_USE_TOOL_AGENT = process.env.VERCEL !== "1";
+
 const FILE_GENERATION_RESPONSE_SCHEMA = z.object({
   files: z.array(
     z.object({
@@ -386,16 +388,18 @@ export async function runCodeAgentWorkflow({
 
   let result: Awaited<ReturnType<typeof runCodeGenerationAttempt>> | null = null;
 
-  for (const modelName of GEMINI_PRIMARY_MODELS) {
-    try {
-      result = await runCodeGenerationAttempt({
-        modelName,
-        projectId,
-        sandboxId,
-        value,
-      });
-      break;
-    } catch {
+  if (SHOULD_USE_TOOL_AGENT) {
+    for (const modelName of GEMINI_PRIMARY_MODELS) {
+      try {
+        result = await runCodeGenerationAttempt({
+          modelName,
+          projectId,
+          sandboxId,
+          value,
+        });
+        break;
+      } catch {
+      }
     }
   }
 
