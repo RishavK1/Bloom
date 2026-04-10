@@ -1,13 +1,8 @@
 import { z } from "zod";
-import { execFile } from "node:child_process";
-import path from "node:path";
-import { promisify } from "node:util";
 
 import { inngest } from "./client";
 import { prisma } from "@/lib/db";
-import type { RunCodeAgentResult } from "./run-code-agent";
-
-const execFileAsync = promisify(execFile);
+import { runCodeAgentWorkflow } from "./run-code-agent";
 
 export const codeAgentFunction = inngest.createFunction(
   { id: "code-agent" },
@@ -19,20 +14,7 @@ export const codeAgentFunction = inngest.createFunction(
     }).parse(event.data);
 
     const workflowResult = await step.run("run-code-agent", async () => {
-      const tsxBin = path.join(process.cwd(), "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
-      const cliPath = path.join(process.cwd(), "src", "inngest", "run-code-agent.cli.ts");
-
-      const { stdout } = await execFileAsync(
-        tsxBin,
-        [cliPath, JSON.stringify(workflowInput)],
-        {
-          cwd: process.cwd(),
-          env: process.env,
-          maxBuffer: 10 * 1024 * 1024,
-        }
-      );
-
-      return JSON.parse(stdout) as RunCodeAgentResult;
+      return runCodeAgentWorkflow(workflowInput);
     });
 
     const isError =
