@@ -4,6 +4,7 @@ import "./globals.css";
 import { TRPCReactProvider } from "@/trpc/client";
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "next-themes";
+import { Analytics } from "@vercel/analytics/next";
 
 export const metadata: Metadata = {
   title: "Bloom - Build Apps with AI",
@@ -32,6 +33,7 @@ export default function RootLayout({
         <Toaster />
         {children}
         </ThemeProvider>
+        <Analytics />
       </body>
     </html>
     </TRPCReactProvider>
