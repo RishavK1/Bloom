@@ -1,7 +1,7 @@
 import { inngest } from "@/inngest/client";
-import { GEMINI_FAST_MODELS } from "@/lib/ai-models";
+import { GEMINI_FAST_MODELS, PERPLEXITY_FAST_MODELS } from "@/lib/ai-models";
 import { prisma } from "@/lib/db";
-import { runAgentWithGeminiFallback } from "@/lib/gemini";
+import { runAgentWithFallback } from "@/lib/ai-provider";
 import {  createTRPCRouter, protectedProcedure } from "@/trpc/init";
 import z from "zod";
 import { TRPCError } from "@trpc/server";
@@ -51,9 +51,10 @@ async function generateProjectName(userPrompt: string): Promise<string> {
     const promptBasedName = deriveProjectNameFromPrompt(userPrompt);
 
     try {
-        const result = await runAgentWithGeminiFallback({
+        const result = await runAgentWithFallback({
             input: userPrompt,
-            models: GEMINI_FAST_MODELS,
+            perplexityModels: PERPLEXITY_FAST_MODELS,
+            geminiModels: GEMINI_FAST_MODELS,
             buildAgent: (model) => createAgent({
                 name: "project-name-generator",
                 description: "Generates smart project names based on user prompts",
@@ -125,17 +126,35 @@ getOne : protectedProcedure
         return existingProject;
     }),
     getMany : protectedProcedure
-    .query(async ({ctx})=>{
+    .input(
+        z.object({
+            cursor: z.string().nullish(),
+            limit: z.number().min(1).max(50).default(9),
+        }).optional()
+    )
+    .query(async ({ctx, input})=>{
+        const limit = input?.limit ?? 9;
         const projects = await prisma.project.findMany({
             where:{
                 userId : ctx.auth.userId,
             },
             orderBy:{
-                updatedAt:"desc" 
+                updatedAt:"desc"
             },
-            
+            take: limit + 1,
+            ...(input?.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
         })
-        return projects;
+
+        let nextCursor: string | undefined;
+        if (projects.length > limit) {
+            const nextItem = projects.pop();
+            nextCursor = nextItem?.id;
+        }
+
+        return {
+            items: projects,
+            nextCursor,
+        };
     }),
     create: protectedProcedure
         .input(

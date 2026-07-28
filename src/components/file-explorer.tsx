@@ -4,6 +4,7 @@ import { useState, useMemo, useCallback, Fragment } from "react";
 
 import { Button } from "./ui/button";
 import { CodeView } from "./code-view";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 import {
     ResizableHandle,
@@ -94,6 +95,7 @@ interface FileExplorerProps {
     files: FileCollection;
 }
 export const FileExplorer = ({ files }: FileExplorerProps) => {
+    const isMobile = useIsMobile();
     const [copied, setCopied] = useState(false);
     const [selectedFiles, setSelectedFiles] = useState<string | null>(() => {
         const fileKeys = Object.keys(files);
@@ -122,8 +124,13 @@ export const FileExplorer = ({ files }: FileExplorerProps) => {
         }
     }, [selectedFiles, files]);
     return (
-        <ResizablePanelGroup direction="horizontal">
-            <ResizablePanel defaultSize={30} minSize={30} className="bg-sidebar">
+        <ResizablePanelGroup direction={isMobile ? "vertical" : "horizontal"}>
+            <ResizablePanel
+                defaultSize={isMobile ? 35 : 30}
+                minSize={isMobile ? 15 : 30}
+                maxSize={isMobile ? 60 : undefined}
+                className="bg-sidebar"
+            >
                 <TreeView
                     data={treeData}
                     value={selectedFiles}
@@ -132,7 +139,7 @@ export const FileExplorer = ({ files }: FileExplorerProps) => {
 
             </ResizablePanel>
             <ResizableHandle className="hover:bg-primary transition-colors" />
-            <ResizablePanel defaultSize={70} minSize={50} >
+            <ResizablePanel defaultSize={isMobile ? 65 : 70} minSize={isMobile ? 30 : 50} >
                 {
                     selectedFiles && files[selectedFiles] ? (
                         <div className="h-full w-full flex flex-col">

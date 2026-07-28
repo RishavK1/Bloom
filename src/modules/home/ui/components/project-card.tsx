@@ -53,7 +53,7 @@ export const ProjectCard = ({ project }: ProjectCardProps) => {
 
     const deleteProject = useMutation(trpc.projects.delete.mutationOptions({
         onSuccess: () => {
-            queryClient.invalidateQueries(trpc.projects.getMany.queryOptions())
+            queryClient.invalidateQueries({ queryKey: trpc.projects.getMany.pathKey() })
             toast.success("Project deleted successfully")
             setShowDeleteDialog(false)
         },
@@ -64,7 +64,7 @@ export const ProjectCard = ({ project }: ProjectCardProps) => {
 
     const renameProject = useMutation(trpc.projects.rename.mutationOptions({
         onSuccess: () => {
-            queryClient.invalidateQueries(trpc.projects.getMany.queryOptions())
+            queryClient.invalidateQueries({ queryKey: trpc.projects.getMany.pathKey() })
             toast.success("Project renamed successfully")
             setShowRenameDialog(false)
         },

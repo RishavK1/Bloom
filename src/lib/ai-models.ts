@@ -1,3 +1,19 @@
+// Primary provider: Perplexity (Sonar models)
+export const PERPLEXITY_PRIMARY_MODELS = [
+  "sonar-pro",
+  "sonar-reasoning-pro",
+  "sonar",
+] as const;
+
+export const PERPLEXITY_FAST_MODELS = [
+  "sonar",
+  "sonar-pro",
+] as const;
+
+export const PERPLEXITY_PRIMARY_MODEL = PERPLEXITY_PRIMARY_MODELS[0];
+export const PERPLEXITY_FAST_MODEL = PERPLEXITY_FAST_MODELS[0];
+
+// Fallback provider: Gemini, used only when Perplexity is unavailable (e.g. credits exhausted)
 export const GEMINI_PRIMARY_MODELS = [
   "gemini-flash-latest",
   "gemini-2.5-flash",

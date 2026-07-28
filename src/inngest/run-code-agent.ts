@@ -10,9 +10,14 @@ import {
 } from "@inngest/agent-kit";
 import { z } from "zod";
 
-import { GEMINI_FAST_MODELS, GEMINI_PRIMARY_MODELS } from "../lib/ai-models";
+import {
+  GEMINI_FAST_MODELS,
+  GEMINI_PRIMARY_MODELS,
+  PERPLEXITY_FAST_MODELS,
+  PERPLEXITY_PRIMARY_MODELS,
+} from "../lib/ai-models";
+import { perplexity, runAgentWithFallback } from "../lib/ai-provider";
 import { prisma } from "../lib/db";
-import { runAgentWithGeminiFallback } from "../lib/gemini";
 import { FRAGMENT_TITLE_PROMPT, PROMPT, RESPONSE_PROMPT } from "../prompt";
 import { getSandbox, lastAssistantTextMessageContent } from "./utils";
 
@@ -67,6 +72,98 @@ function getGeminiResponseText(payload: unknown) {
 function getGeminiErrorMessage(payload: unknown) {
   const message = (payload as { error?: { message?: string } })?.error?.message;
   return message || "Gemini request failed";
+}
+
+function getPerplexityResponseText(payload: unknown) {
+  const text = (payload as {
+    choices?: Array<{ message?: { content?: string } }>;
+  })?.choices?.[0]?.message?.content;
+
+  if (!text) {
+    throw new Error("Perplexity returned an empty response");
+  }
+
+  return text;
+}
+
+function getPerplexityErrorMessage(payload: unknown) {
+  const message = (payload as { error?: { message?: string } })?.error?.message;
+  return message || "Perplexity request failed";
+}
+
+const FILE_GENERATION_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    summary: { type: "string" },
+    title: { type: "string" },
+    response: { type: "string" },
+    files: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          path: { type: "string" },
+          content: { type: "string" },
+        },
+        required: ["path", "content"],
+      },
+    },
+  },
+  required: ["summary", "title", "response", "files"],
+};
+
+async function fetchPerplexityJson(model: string, prompt: string) {
+  const response = await fetch("https://api.perplexity.ai/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${process.env.PERPLEXITY_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: prompt }],
+      response_format: {
+        type: "json_schema",
+        json_schema: { schema: FILE_GENERATION_JSON_SCHEMA },
+      },
+    }),
+  });
+
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(getPerplexityErrorMessage(payload));
+  }
+
+  return getPerplexityResponseText(payload);
+}
+
+async function fetchGeminiJson(model: string, prompt: string) {
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [{ text: prompt }],
+          },
+        ],
+        generationConfig: {
+          responseMimeType: "application/json",
+        },
+      }),
+    }
+  );
+
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(getGeminiErrorMessage(payload));
+  }
+
+  return getGeminiResponseText(payload);
 }
 
 function sanitizeGeneratedFile(path: string, content: string) {
@@ -164,39 +261,30 @@ ${existingFiles}
 Latest user request:
 ${value}`;
 
-  const models = [...new Set([...GEMINI_PRIMARY_MODELS, ...GEMINI_FAST_MODELS])];
+  const perplexityModels = process.env.PERPLEXITY_API_KEY
+    ? [...new Set([...PERPLEXITY_PRIMARY_MODELS, ...PERPLEXITY_FAST_MODELS])]
+    : [];
+  const geminiModels = [...new Set([...GEMINI_PRIMARY_MODELS, ...GEMINI_FAST_MODELS])];
+
+  const attempts: Array<{ label: string; run: () => Promise<string> }> = [
+    ...perplexityModels.map((model) => ({
+      label: `perplexity:${model}`,
+      run: () => fetchPerplexityJson(model, prompt),
+    })),
+    ...geminiModels.map((model) => ({
+      label: `gemini:${model}`,
+      run: () => fetchGeminiJson(model, prompt),
+    })),
+  ];
+
   let lastError: unknown;
 
-  for (const model of models) {
+  for (const attempt of attempts) {
     try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [{ text: prompt }],
-              },
-            ],
-            generationConfig: {
-              responseMimeType: "application/json",
-            },
-          }),
-        }
-      );
-
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(getGeminiErrorMessage(payload));
-      }
-
       const parsed = FILE_GENERATION_RESPONSE_SCHEMA.parse(
-        JSON.parse(getGeminiResponseText(payload))
+        JSON.parse(await attempt.run())
       );
+      console.log(`[generateFilesWithoutTools] served by ${attempt.label}`);
 
       const activeSandbox = await getSandbox(sandboxId);
       const fileMap: Record<string, string> = {};
@@ -213,6 +301,7 @@ ${value}`;
         title: parsed.title,
       };
     } catch (error) {
+      console.log(`[generateFilesWithoutTools] ${attempt.label} failed: ${error instanceof Error ? error.message : String(error)}`);
       lastError = error;
     }
   }
@@ -221,12 +310,12 @@ ${value}`;
 }
 
 async function runCodeGenerationAttempt({
-  modelName,
+  model,
   projectId,
   sandboxId,
   value,
 }: {
-  modelName: string;
+  model: ReturnType<typeof gemini> | ReturnType<typeof perplexity>;
   projectId: string;
   sandboxId: string;
   value: string;
@@ -263,7 +352,7 @@ async function runCodeGenerationAttempt({
     name: "code-agent",
     description: "An expert coding agent",
     system: PROMPT,
-    model: gemini({ model: modelName }),
+    model,
     tools: [
       createTool({
         name: "terminal",
@@ -389,16 +478,31 @@ export async function runCodeAgentWorkflow({
   let result: Awaited<ReturnType<typeof runCodeGenerationAttempt>> | null = null;
 
   if (SHOULD_USE_TOOL_AGENT) {
-    for (const modelName of GEMINI_PRIMARY_MODELS) {
+    const attempts: Array<{ label: string; model: ReturnType<typeof gemini> | ReturnType<typeof perplexity> }> = [
+      ...(process.env.PERPLEXITY_API_KEY
+        ? PERPLEXITY_PRIMARY_MODELS.map((modelName) => ({
+            label: `perplexity:${modelName}`,
+            model: perplexity(modelName),
+          }))
+        : []),
+      ...GEMINI_PRIMARY_MODELS.map((modelName) => ({
+        label: `gemini:${modelName}`,
+        model: gemini({ model: modelName }),
+      })),
+    ];
+
+    for (const attempt of attempts) {
       try {
         result = await runCodeGenerationAttempt({
-          modelName,
+          model: attempt.model,
           projectId,
           sandboxId,
           value,
         });
+        console.log(`[runCodeAgentWorkflow] tool agent served by ${attempt.label}`);
         break;
-      } catch {
+      } catch (error) {
+        console.log(`[runCodeAgentWorkflow] tool agent ${attempt.label} failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
@@ -441,9 +545,10 @@ export async function runCodeAgentWorkflow({
   }
 
   const [fragmentTitleResult, responseResult] = await Promise.all([
-    runAgentWithGeminiFallback({
+    runAgentWithFallback({
       input: summary,
-      models: GEMINI_FAST_MODELS,
+      perplexityModels: PERPLEXITY_FAST_MODELS,
+      geminiModels: GEMINI_FAST_MODELS,
       buildAgent: (model) => createAgent({
         name: "fragment-title-generator",
         description: "A Fragment Title Generator Agent",
@@ -451,9 +556,10 @@ export async function runCodeAgentWorkflow({
         model,
       }),
     }),
-    runAgentWithGeminiFallback({
+    runAgentWithFallback({
       input: summary,
-      models: GEMINI_FAST_MODELS,
+      perplexityModels: PERPLEXITY_FAST_MODELS,
+      geminiModels: GEMINI_FAST_MODELS,
       buildAgent: (model) => createAgent({
         name: "response-generator",
         description: "A Response Generator Agent",

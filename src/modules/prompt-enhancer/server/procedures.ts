@@ -1,8 +1,10 @@
 import { createTRPCRouter, protectedProcedure } from "@/trpc/init";
-import { GEMINI_FAST_MODELS } from "@/lib/ai-models";
-import { runAgentWithGeminiFallback } from "@/lib/gemini";
+import { GEMINI_FAST_MODELS, PERPLEXITY_FAST_MODELS } from "@/lib/ai-models";
+import { runAgentWithFallback } from "@/lib/ai-provider";
+import { consumePromptEnhanceCredits } from "@/lib/usage";
 import { z } from "zod";
 import { createAgent } from "@inngest/agent-kit";
+import { TRPCError } from "@trpc/server";
 
 function normalizeText(value: string) {
     return value.toLowerCase().replace(/\s+/g, " ").trim();
@@ -22,9 +24,25 @@ export const promptEnhancerRouter = createTRPCRouter({
         )
         .mutation(async ({ input }) => {
             try {
-                const result = await runAgentWithGeminiFallback({
+                await consumePromptEnhanceCredits();
+            } catch (error) {
+                if (error instanceof Error) {
+                    throw new TRPCError({
+                        code: "BAD_REQUEST",
+                        message: error.message,
+                    });
+                }
+                throw new TRPCError({
+                    code: "TOO_MANY_REQUESTS",
+                    message: "You've reached the prompt enhancement limit. Please try again later.",
+                });
+            }
+
+            try {
+                const result = await runAgentWithFallback({
                     input: input.prompt,
-                    models: GEMINI_FAST_MODELS,
+                    perplexityModels: PERPLEXITY_FAST_MODELS,
+                    geminiModels: GEMINI_FAST_MODELS,
                     buildAgent: (model) => createAgent({
                         name: "prompt-enhancer",
                         description: "Enhances user prompts for better code generation",

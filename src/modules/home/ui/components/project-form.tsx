@@ -34,9 +34,7 @@ export const ProjectForm = () => {
     });
     const createProject = useMutation(trpc.projects.create.mutationOptions({
         onSuccess: (data) => {
-            queryClient.invalidateQueries(
-                trpc.projects.getMany.queryOptions()
-            );
+            queryClient.invalidateQueries({ queryKey: trpc.projects.getMany.pathKey() });
             queryClient.invalidateQueries(trpc.usage.status.queryOptions());
             router.push(`/projects/${data.id}`);
         },
